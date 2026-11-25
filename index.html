@@ -145,7 +145,11 @@ $("make").addEventListener("click",async()=>{
  const names=[...$("sheets").querySelectorAll("input:checked")].map(x=>x.value);
  if(!names.length){$("status").textContent="シートを選択してください";return}
  try{
-  const {jsPDF}=window.jspdf;
+  const jsPDF = window.jspdf?.jsPDF;
+
+if (!jsPDF) {
+  throw new Error("jsPDFライブラリを読み込めません。");
+}
   const doc=new jsPDF({
    orientation:$("orientation").value,
    unit:"mm",format:$("paper").value
