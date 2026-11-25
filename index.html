@@ -1,1 +1,198 @@
 
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Excel PDF Converter</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
+<style>
+*{box-sizing:border-box}
+body{font-family:sans-serif;background:#f1f5f9;color:#222;margin:0;padding:18px}
+main{max-width:650px;margin:auto}
+h1{font-size:23px;color:#176b45}
+.card{background:white;border-radius:14px;padding:17px;margin:14px 0;box-shadow:0 2px 8px #0001}
+button,.filebtn{background:#176b45;color:white;border:0;border-radius:9px;padding:13px;font-size:15px;cursor:pointer}
+button{width:100%;margin-top:10px}
+input,select{width:100%;padding:12px;border:1px solid #ccd3dc;border-radius:8px;margin:7px 0}
+label{display:block;font-size:14px;margin-top:12px}
+small{color:#667085}
+#preview{overflow:auto;max-height:350px}
+table{border-collapse:collapse;font-size:12px}
+td,th{border:1px solid #bbb;padding:5px;white-space:nowrap}
+.sheet{display:flex;align-items:center;gap:8px;margin:8px 0}
+.sheet input{width:auto}
+#status{white-space:pre-wrap;font-size:13px;color:#176b45}
+</style>
+</head>
+<body>
+<main>
+<h1>📊 Excel PDF Converter</h1>
+<p>ExcelファイルをPDFに変換</p>
+
+<div class="card">
+<h3>① Excelファイルを選択</h3>
+<input type="file" id="file" accept=".xlsx,.xls">
+<small>対応形式：XLSX / XLS</small>
+</div>
+
+<div class="card">
+<h3>② 変換設定</h3>
+<label>用紙サイズ</label>
+<select id="paper">
+<option value="a4">A4</option>
+<option value="a3">A3</option>
+</select>
+<label>向き</label>
+<select id="orientation">
+<option value="landscape">横向き</option>
+<option value="portrait">縦向き</option>
+</select>
+<label>印刷倍率</label>
+<select id="scale">
+<option value="fit">横幅を1ページに収める</option>
+<option value="actual">実際の大きさ</option>
+</select>
+<label>印刷範囲（例：A1:H35）</label>
+<input id="range" placeholder="空欄ならデータ範囲">
+</div>
+
+<div class="card">
+<h3>③ シート選択</h3>
+<div id="sheets">Excelファイルを選択してください</div>
+</div>
+
+<div class="card">
+<h3>④ プレビュー</h3>
+<div id="preview"><small>ファイルを選択すると表示されます</small></div>
+</div>
+
+<div class="card">
+<h3>⑤ PDF作成</h3>
+<button id="make">PDFに変換・保存</button>
+<p id="status"></p>
+</div>
+</main>
+
+<script>
+let workbook=null;
+let selectedFile=false;
+
+const $=id=>document.getElementById(id);
+
+$("file").addEventListener("change",async e=>{
+ const file=e.target.files[0];
+ if(!file)return;
+ try{
+  const data=await file.arrayBuffer();
+  workbook=XLSX.read(data,{type:"array"});
+  selectedFile=true;
+  $("sheets").innerHTML="";
+  workbook.SheetNames.forEach((name,i)=>{
+   const div=document.createElement("div");
+   div.className="sheet";
+   const cb=document.createElement("input");
+   cb.type="checkbox";cb.checked=true;cb.value=name;
+   cb.id="sheet"+i;
+   const label=document.createElement("label");
+   label.htmlFor=cb.id;label.textContent=name;
+   div.append(cb,label);
+   $("sheets").append(div);
+  });
+  $("range").value="";
+  showPreview(workbook.SheetNames[0]);
+  $("status").textContent="読み込み完了";
+ }catch(err){
+  $("status").textContent="読み込みエラー："+err.message;
+ }
+});
+
+function getRange(sheet){
+ const ref=$("range").value.trim();
+ if(ref){
+  try{return XLSX.utils.decode_range(ref)}catch(e){}
+ }
+ return sheet["!ref"]?XLSX.utils.decode_range(sheet["!ref"]):{s:{r:0,c:0},e:{r:0,c:0}};
+}
+
+function showPreview(name){
+ const sheet=workbook.Sheets[name];
+ const range=getRange(sheet);
+ let html="<table>";
+ const maxR=Math.min(range.e.r,range.s.r+19);
+ const maxC=Math.min(range.e.c,range.s.c+9);
+ for(let r=range.s.r;r<=maxR;r++){
+  html+="<tr>";
+  for(let c=range.s.c;c<=maxC;c++){
+   const cell=sheet[XLSX.utils.encode_cell({r,c})];
+   html+="<td>"+(cell?String(cell.w??cell.v??"").replace(/[&<>"]/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[x])):"")+"</td>";
+  }
+  html+="</tr>";
+ }
+ $("preview").innerHTML=html+"</table>";
+}
+
+$("range").addEventListener("change",()=>{
+ if(workbook)showPreview(workbook.SheetNames[0]);
+});
+
+$("make").addEventListener("click",async()=>{
+ if(!selectedFile){$("status").textContent="先にExcelファイルを選択してください";return}
+ const names=[...$("sheets").querySelectorAll("input:checked")].map(x=>x.value);
+ if(!names.length){$("status").textContent="シートを選択してください";return}
+ try{
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({
+   orientation:$("orientation").value,
+   unit:"mm",format:$("paper").value
+  });
+  const pageW=doc.internal.pageSize.getWidth();
+  const pageH=doc.internal.pageSize.getHeight();
+  const margin=10;
+  let first=true;
+  names.forEach(name=>{
+   const sheet=workbook.Sheets[name];
+   const rg=getRange(sheet);
+   const rows=[];
+   for(let r=rg.s.r;r<=rg.e.r;r++){
+    const row=[];
+    for(let c=rg.s.c;c<=rg.e.c;c++){
+     const cell=sheet[XLSX.utils.encode_cell({r,c})];
+     row.push(cell?String(cell.w??cell.v??""):"");
+    }
+    rows.push(row);
+   }
+   const maxCols=Math.max(...rows.map(x=>x.length),1);
+   const maxRows=Math.max(rows.length,1);
+   const cellW=(pageW-2*margin)/maxCols;
+   const cellH=6;
+   const fit=$("scale").value==="fit";
+   const factor=fit?Math.min(1,(pageH-2*margin)/(maxRows*cellH)):1;
+   const w=cellW*factor,h=cellH*factor;
+   let y=margin;
+   rows.forEach(row=>{
+    if(y+h>pageH-margin){
+     doc.addPage();y=margin;
+    }
+    row.forEach((value,c)=>{
+     const x=margin+c*w;
+     doc.rect(x,y,w,h);
+     doc.setFontSize(Math.max(5,7*factor));
+     doc.text(String(value).slice(0,45),x+1,y+Math.min(h-1,4*factor),{maxWidth:Math.max(1,w-2)});
+    });
+    y+=h;
+   });
+   if(!first)doc.addPage();
+   first=false;
+  });
+  doc.save("Excel-Converted.pdf");
+  $("status").textContent="PDFを作成しました";
+ }catch(err){
+  $("status").textContent="変換エラー："+err.message;
+ }
+});
+</script>
+</body>
+</html>
+
