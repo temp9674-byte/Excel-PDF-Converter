@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Excel PDF Converter</title>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-<script src="https://unpkg.com/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
 console.log("jsPDF読み込み状態:", window.jspdf);
 </script>
@@ -150,51 +150,121 @@ $("make").addEventListener("click",async()=>{
 if (!jsPDF) {
   throw new Error("jsPDFライブラリを読み込めません。");
 }
-  const doc=new jsPDF({
-   orientation:$("orientation").value,
-   unit:"mm",format:$("paper").value
-  });
-  const pageW=doc.internal.pageSize.getWidth();
-  const pageH=doc.internal.pageSize.getHeight();
-  const margin=10;
-  let first=true;
-  names.forEach(name=>{
-   const sheet=workbook.Sheets[name];
-   const rg=getRange(sheet);
-   const rows=[];
-   for(let r=rg.s.r;r<=rg.e.r;r++){
-    const row=[];
-    for(let c=rg.s.c;c<=rg.e.c;c++){
-     const cell=sheet[XLSX.utils.encode_cell({r,c})];
-     row.push(cell?String(cell.w??cell.v??""):"");
+  const doc = new jsPDF({
+  orientation: $("orientation").value,
+  unit: "mm",
+  format: $("paper").value
+});
+
+const pageW = doc.internal.pageSize.getWidth();
+const pageH = doc.internal.pageSize.getHeight();
+const margin = 10;
+const contentW = pageW - margin * 2;
+const contentH = pageH - margin * 2;
+const pxW = Math.floor(contentW * 96 / 25.4);
+
+let pageStarted = false;
+
+for (const name of names) {
+  const sheet = workbook.Sheets[name];
+  const rg = getRange(sheet);
+  const rows = [];
+
+  for (let r = rg.s.r; r <= rg.e.r; r++) {
+    const row = [];
+
+    for (let c = rg.s.c; c <= rg.e.c; c++) {
+      const cell = sheet[XLSX.utils.encode_cell({r, c})];
+      row.push(cell ? String(cell.w ?? cell.v ?? "") : "");
     }
-    rows.push(row);
-   }
-   const maxCols=Math.max(...rows.map(x=>x.length),1);
-   const maxRows=Math.max(rows.length,1);
-   const cellW=(pageW-2*margin)/maxCols;
-   const cellH=6;
-   const fit=$("scale").value==="fit";
-   const factor=fit?Math.min(1,(pageH-2*margin)/(maxRows*cellH)):1;
-   const w=cellW*factor,h=cellH*factor;
-   let y=margin;
-   rows.forEach(row=>{
-    if(y+h>pageH-margin){
-     doc.addPage();y=margin;
+
+    if (row.some(v => v.trim() !== "")) {
+      rows.push(row);
     }
-    row.forEach((value,c)=>{
-     const x=margin+c*w;
-     doc.rect(x,y,w,h);
-     doc.setFontSize(Math.max(5,7*factor));
-     doc.text(String(value).slice(0,45),x+1,y+Math.min(h-1,4*factor),{maxWidth:Math.max(1,w-2)});
+  }
+
+  if (!rows.length) continue;
+
+  let lastCol = 0;
+  rows.forEach(row => {
+    row.forEach((v, c) => {
+      if (v.trim() !== "") lastCol = Math.max(lastCol, c);
     });
-    y+=h;
-   });
-   if(!first)doc.addPage();
-   first=false;
   });
-  doc.save("Excel-Converted.pdf");
-  $("status").textContent="PDFを作成しました";
+
+  const table = document.createElement("table");
+  table.style.cssText =
+    "width:100%;border-collapse:collapse;table-layout:fixed;" +
+    "font-family:sans-serif;font-size:10px;color:#111;";
+
+  rows.forEach(row => {
+    const tr = document.createElement("tr");
+
+    for (let c = 0; c <= lastCol; c++) {
+      const td = document.createElement("td");
+      td.textContent = row[c] || "";
+      td.style.cssText =
+        "border:1px solid #555;padding:3px;" +
+        "overflow-wrap:anywhere;vertical-align:top;";
+      tr.appendChild(td);
+    }
+
+    table.appendChild(tr);
+  });
+
+  const area = document.createElement("div");
+  area.style.cssText =
+    `position:absolute;left:-100000px;top:0;width:${pxW}px;` +
+    "background:white;padding:0;";
+
+  area.appendChild(table);
+  document.body.appendChild(area);
+
+  const canvas = await html2canvas(area, {
+    scale: 2,
+    backgroundColor: "#ffffff",
+    useCORS: true
+  });
+
+  document.body.removeChild(area);
+
+  const pagePixelH = Math.floor(
+    canvas.width * contentH / contentW
+  );
+
+  for (let y = 0; y < canvas.height; y += pagePixelH) {
+    if (pageStarted) doc.addPage();
+
+    const sliceH = Math.min(pagePixelH, canvas.height - y);
+    const part = document.createElement("canvas");
+    part.width = canvas.width;
+    part.height = sliceH;
+
+    part.getContext("2d").drawImage(
+      canvas,
+      0, y, canvas.width, sliceH,
+      0, 0, canvas.width, sliceH
+    );
+
+    const img = part.toDataURL("image/jpeg", 0.95);
+    const drawH = contentW * sliceH / canvas.width;
+
+    doc.addImage(
+      img, "JPEG",
+      margin, margin,
+      contentW, drawH
+    );
+
+    pageStarted = true;
+  }
+}
+
+if (!pageStarted) {
+  throw new Error("PDFに変換できるデータがありません。");
+}
+
+doc.save("Excel-Converted.pdf");
+$("status").textContent = "PDFを作成しました";
  }catch(err){
   $("status").textContent="変換エラー："+err.message;
  }
